@@ -117,6 +117,7 @@ export interface StudyCard {
 }
 
 export type StudyPlanTaskKind = 'memorize' | 'speaking' | 'mock';
+export type StudyPlanDuration = 14 | 30 | 60;
 
 export interface StudyPlanTask {
   id: string;

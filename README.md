@@ -12,7 +12,7 @@ OPIc speaking practice simulator for study sessions. It follows the public OPIc-
 - Strict mock mode with hidden prompts, replay window, and delayed NEXT
 - Topic-by-topic practice mode
 - Question DB management with prompt, model answer, and study-card views
-- 14-day study plan with memorization, speaking practice, mock tasks, completion checks, notes, and portfolio export
+- Configurable 2-week, 1-month, or 2-month study plan with memorization, speaking practice, mock tasks, completion checks, notes, and portfolio export
 - Session review with audio playback
 - JSON export for the session log
 
@@ -69,4 +69,4 @@ The exam generator always starts with self-introduction, then builds topic sets,
 
 ## Study Plan
 
-The 2-week study plan is stored in browser `localStorage`, so completion checks and notes remain after refresh on the same browser. The portfolio export downloads a JSON summary of all days, tasks, completion states, and notes.
+The study plan can run for 2 weeks, 1 month, or 2 months. It is stored in browser `localStorage`, so completion checks and notes remain after refresh on the same browser. The portfolio export downloads a JSON summary of all days, tasks, completion states, selected duration, and notes.

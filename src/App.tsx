@@ -44,6 +44,7 @@ import type {
   StudyCard,
   StudyCardCategory,
   StudyPlanDay,
+  StudyPlanDuration,
   StudyPlanTask,
   StudyPlanTaskKind,
   TaskType,
@@ -107,6 +108,18 @@ const planTaskLabels: Record<StudyPlanTaskKind, string> = {
 
 const planStorageKey = 'opic-study-plan-v1';
 
+const defaultPlanDuration: StudyPlanDuration = 14;
+
+const planDurationOptions: Array<{
+  days: StudyPlanDuration;
+  label: string;
+  caption: string;
+}> = [
+  { days: 14, label: '2주', caption: '단기 완성' },
+  { days: 30, label: '1달', caption: '균형 루틴' },
+  { days: 60, label: '2달', caption: '장기 누적' },
+];
+
 const planTopicCycle: TopicKey[] = [
   'home',
   'movies',
@@ -138,14 +151,22 @@ function formatPlanDate(date: Date): string {
   }).format(date);
 }
 
-function buildTwoWeekPlan(startDate: Date): StudyPlanDay[] {
-  return Array.from({ length: 14 }, (_, index) => {
+function normalizePlanDuration(value: unknown): StudyPlanDuration {
+  return planDurationOptions.some((option) => option.days === value)
+    ? (value as StudyPlanDuration)
+    : defaultPlanDuration;
+}
+
+function buildStudyPlan(startDate: Date, durationDays: StudyPlanDuration): StudyPlanDay[] {
+  return Array.from({ length: durationDays }, (_, index) => {
     const day = index + 1;
     const topic = planTopicCycle[index % planTopicCycle.length];
     const nextTopic = planTopicCycle[(index + 1) % planTopicCycle.length];
-    const level: LevelKey = day <= 4 ? 'novice' : day <= 10 ? 'intermediate' : 'advanced';
-    const isCheckpoint = day === 7 || day === 14;
-    const isRoleplayDay = day === 6 || day === 10 || day === 13;
+    const progress = day / durationDays;
+    const level: LevelKey =
+      progress <= 0.3 ? 'novice' : progress <= 0.72 ? 'intermediate' : 'advanced';
+    const isCheckpoint = day % 7 === 0 || day === durationDays;
+    const isRoleplayDay = day % 6 === 0 || day % 10 === 0 || day % 13 === 0;
 
     const tasks: StudyPlanTask[] = [
       {
@@ -154,7 +175,7 @@ function buildTwoWeekPlan(startDate: Date): StudyPlanDay[] {
         kind: 'memorize',
         title: isCheckpoint ? '누적 모범 답변 리콜' : `${getTopicLabel(topic)} 모범 답변 암기`,
         detail: isCheckpoint
-          ? '이번 주에 외운 답변 6개를 보지 않고 60초 안에 재구성한다.'
+          ? '최근 7일 동안 외운 답변 6개를 보지 않고 60초 안에 재구성한다.'
           : '모범 답변 2개와 암기 카드 1개를 듣고, 핵심 표현 5개를 말로 반복한다.',
         minutes: isCheckpoint ? 35 : 30,
         topic,
@@ -198,6 +219,7 @@ function buildTwoWeekPlan(startDate: Date): StudyPlanDay[] {
 
 interface StudyPlanProgress {
   startedAt: string;
+  durationDays: StudyPlanDuration;
   completed: Record<string, boolean>;
   notes: Record<string, string>;
 }
@@ -246,13 +268,22 @@ function App() {
   const [planProgress, setPlanProgress] = useState<StudyPlanProgress>(() => {
     try {
       const saved = window.localStorage.getItem(planStorageKey);
-      if (saved) return JSON.parse(saved) as StudyPlanProgress;
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<StudyPlanProgress>;
+        return {
+          startedAt: parsed.startedAt ?? new Date().toISOString(),
+          durationDays: normalizePlanDuration(parsed.durationDays),
+          completed: parsed.completed ?? {},
+          notes: parsed.notes ?? {},
+        };
+      }
     } catch {
       // Local storage can be unavailable in private or restricted browser contexts.
     }
 
     return {
       startedAt: new Date().toISOString(),
+      durationDays: defaultPlanDuration,
       completed: {},
       notes: {},
     };
@@ -310,8 +341,8 @@ function App() {
   );
 
   const studyPlan = useMemo(
-    () => buildTwoWeekPlan(new Date(planProgress.startedAt)),
-    [planProgress.startedAt],
+    () => buildStudyPlan(new Date(planProgress.startedAt), planProgress.durationDays),
+    [planProgress.durationDays, planProgress.startedAt],
   );
   const planTasks = useMemo(() => studyPlan.flatMap((day) => day.tasks), [studyPlan]);
   const completedPlanCount = planTasks.filter((task) => planProgress.completed[task.id]).length;
@@ -323,7 +354,7 @@ function App() {
     ? Math.round((completedPlanCount / planTasks.length) * 100)
     : 0;
   const todayPlanIndex = Math.min(
-    13,
+    planProgress.durationDays - 1,
     Math.max(
       0,
       Math.floor(
@@ -781,6 +812,7 @@ function App() {
   const resetStudyPlan = () => {
     setPlanProgress({
       startedAt: new Date().toISOString(),
+      durationDays: planProgress.durationDays,
       completed: {},
       notes: {},
     });
@@ -828,6 +860,7 @@ function App() {
     const payload = {
       generatedAt: new Date().toISOString(),
       startedAt: planProgress.startedAt,
+      durationDays: planProgress.durationDays,
       summary: {
         totalTasks: planTasks.length,
         completedTasks: completedPlanCount,
@@ -848,7 +881,7 @@ function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'opic-2week-study-portfolio.json';
+    link.download = `opic-${planProgress.durationDays}day-study-portfolio.json`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -957,7 +990,7 @@ function App() {
             <div className="mode-actions">
               <button className="primary-button wide" onClick={() => setPhase('plan')}>
                 <CalendarDays size={19} />
-                2주 플랜
+                공부 플랜
               </button>
               <button className="primary-button wide" onClick={() => setPhase('survey')}>
                 <ListChecks size={19} />
@@ -1001,10 +1034,28 @@ function App() {
         <section className="workspace">
           <div className="section-heading">
             <div>
-              <span className="eyebrow">2-Week Portfolio</span>
-              <h1>2주 공부 플랜</h1>
+              <span className="eyebrow">Study Portfolio</span>
+              <h1>공부 플랜</h1>
             </div>
             <span className="selection-count">{planCompletionRate}% complete</span>
+          </div>
+
+          <div className="plan-duration" aria-label="공부 플랜 기간">
+            {planDurationOptions.map((option) => (
+              <button
+                key={option.days}
+                className={planProgress.durationDays === option.days ? 'active' : ''}
+                onClick={() =>
+                  setPlanProgress((previous) => ({
+                    ...previous,
+                    durationDays: option.days,
+                  }))
+                }
+              >
+                <strong>{option.label}</strong>
+                <span>{option.caption}</span>
+              </button>
+            ))}
           </div>
 
           <div className="plan-stats">
@@ -1020,7 +1071,7 @@ function App() {
             </div>
             <div className="db-stat-card">
               <CalendarDays size={22} />
-              <strong>D{todayPlanIndex + 1}</strong>
+              <strong>D{todayPlanIndex + 1}/{planProgress.durationDays}</strong>
               <span>오늘 플랜</span>
             </div>
           </div>
