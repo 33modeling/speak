@@ -1,5 +1,6 @@
 export type ExamPhase =
   | 'setup'
+  | 'plan'
   | 'survey'
   | 'level'
   | 'warmup'
@@ -113,4 +114,25 @@ export interface StudyCard {
   category: StudyCardCategory;
   content: string;
   tags: string[];
+}
+
+export type StudyPlanTaskKind = 'memorize' | 'speaking' | 'mock';
+
+export interface StudyPlanTask {
+  id: string;
+  day: number;
+  kind: StudyPlanTaskKind;
+  title: string;
+  detail: string;
+  minutes: number;
+  topic?: TopicKey;
+  level?: LevelKey;
+}
+
+export interface StudyPlanDay {
+  id: string;
+  day: number;
+  dateLabel: string;
+  focus: string;
+  tasks: StudyPlanTask[];
 }

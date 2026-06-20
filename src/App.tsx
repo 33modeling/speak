@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
+  CalendarDays,
   CheckCircle2,
   ChevronRight,
+  ClipboardCheck,
   Database,
   Download,
   EyeOff,
@@ -41,6 +43,9 @@ import type {
   SessionMode,
   StudyCard,
   StudyCardCategory,
+  StudyPlanDay,
+  StudyPlanTask,
+  StudyPlanTaskKind,
   TaskType,
   TopicKey,
 } from './types';
@@ -54,6 +59,7 @@ const groupLabels = {
 
 const phaseLabels: Record<ExamPhase, string> = {
   setup: '점검',
+  plan: '플랜',
   survey: '서베이',
   level: '난이도',
   warmup: '워밍업',
@@ -63,7 +69,17 @@ const phaseLabels: Record<ExamPhase, string> = {
   review: '리뷰',
 };
 
-const phaseOrder: ExamPhase[] = ['setup', 'survey', 'level', 'warmup', 'practice', 'database', 'exam', 'review'];
+const phaseOrder: ExamPhase[] = [
+  'setup',
+  'plan',
+  'survey',
+  'level',
+  'warmup',
+  'practice',
+  'database',
+  'exam',
+  'review',
+];
 
 const taskLabels: Record<TaskType, string> = {
   warmup: '자기소개',
@@ -82,6 +98,109 @@ const studyCategoryLabels: Record<StudyCardCategory, string> = {
   pronunciation: '발음',
   stress: '강세',
 };
+
+const planTaskLabels: Record<StudyPlanTaskKind, string> = {
+  memorize: '암기',
+  speaking: '말하기',
+  mock: '실전',
+};
+
+const planStorageKey = 'opic-study-plan-v1';
+
+const planTopicCycle: TopicKey[] = [
+  'home',
+  'movies',
+  'music',
+  'restaurant',
+  'shopping',
+  'domesticTravel',
+  'overseasTravel',
+  'internet',
+  'phone',
+  'weather',
+  'health',
+  'freeTime',
+  'familyFriends',
+  'transportation',
+];
+
+function addDays(date: Date, amount: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
+function formatPlanDate(date: Date): string {
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: 'short',
+    day: 'numeric',
+    weekday: 'short',
+  }).format(date);
+}
+
+function buildTwoWeekPlan(startDate: Date): StudyPlanDay[] {
+  return Array.from({ length: 14 }, (_, index) => {
+    const day = index + 1;
+    const topic = planTopicCycle[index % planTopicCycle.length];
+    const nextTopic = planTopicCycle[(index + 1) % planTopicCycle.length];
+    const level: LevelKey = day <= 4 ? 'novice' : day <= 10 ? 'intermediate' : 'advanced';
+    const isCheckpoint = day === 7 || day === 14;
+    const isRoleplayDay = day === 6 || day === 10 || day === 13;
+
+    const tasks: StudyPlanTask[] = [
+      {
+        id: `day-${day}-memorize`,
+        day,
+        kind: 'memorize',
+        title: isCheckpoint ? '누적 모범 답변 리콜' : `${getTopicLabel(topic)} 모범 답변 암기`,
+        detail: isCheckpoint
+          ? '이번 주에 외운 답변 6개를 보지 않고 60초 안에 재구성한다.'
+          : '모범 답변 2개와 암기 카드 1개를 듣고, 핵심 표현 5개를 말로 반복한다.',
+        minutes: isCheckpoint ? 35 : 30,
+        topic,
+        level,
+      },
+      {
+        id: `day-${day}-speaking`,
+        day,
+        kind: 'speaking',
+        title: isRoleplayDay ? 'Role Play 집중 말하기' : `${getTopicLabel(topic)} 말하기 연습`,
+        detail: isRoleplayDay
+          ? '역할극 문제 3개를 실제처럼 녹음하고, 답변 첫 문장과 대안 제시 표현을 점검한다.'
+          : '주제별 연습 모드에서 10문항을 풀고, 답변마다 시작-상세-마무리 구조를 확인한다.',
+        minutes: 40,
+        topic,
+        level,
+      },
+      {
+        id: `day-${day}-mock`,
+        day,
+        kind: 'mock',
+        title: isCheckpoint ? '풀 모의고사' : '실전 미니 세트',
+        detail: isCheckpoint
+          ? '15문항 실전 모드로 진행하고, 리뷰에서 미응답/짧은 답변을 표시한다.'
+          : `${getTopicLabel(topic)}와 ${getTopicLabel(nextTopic)}를 포함해 실전 모드로 최소 5문항을 연속 답변한다.`,
+        minutes: isCheckpoint ? 55 : 25,
+        topic: nextTopic,
+        level,
+      },
+    ];
+
+    return {
+      id: `day-${day}`,
+      day,
+      dateLabel: formatPlanDate(addDays(startDate, index)),
+      focus: isCheckpoint ? '주간 점검' : `${getTopicLabel(topic)} 중심`,
+      tasks,
+    };
+  });
+}
+
+interface StudyPlanProgress {
+  startedAt: string;
+  completed: Record<string, boolean>;
+  notes: Record<string, string>;
+}
 
 function App() {
   const [phase, setPhase] = useState<ExamPhase>('setup');
@@ -124,6 +243,20 @@ function App() {
   const [modelAnswers, setModelAnswers] = useState<ModelAnswer[]>([]);
   const [studyCards, setStudyCards] = useState<StudyCard[]>([]);
   const [studyBankLoaded, setStudyBankLoaded] = useState(false);
+  const [planProgress, setPlanProgress] = useState<StudyPlanProgress>(() => {
+    try {
+      const saved = window.localStorage.getItem(planStorageKey);
+      if (saved) return JSON.parse(saved) as StudyPlanProgress;
+    } catch {
+      // Local storage can be unavailable in private or restricted browser contexts.
+    }
+
+    return {
+      startedAt: new Date().toISOString(),
+      completed: {},
+      notes: {},
+    };
+  });
   const [questionStartedAt, setQuestionStartedAt] = useState<number | null>(null);
   const [replayAvailableUntil, setReplayAvailableUntil] = useState<number | null>(null);
   const [hasReplayedPrompt, setHasReplayedPrompt] = useState(false);
@@ -174,6 +307,31 @@ function App() {
           option.key !== 'intro' && questionBank.some((question) => question.topic === option.key),
       ),
     [],
+  );
+
+  const studyPlan = useMemo(
+    () => buildTwoWeekPlan(new Date(planProgress.startedAt)),
+    [planProgress.startedAt],
+  );
+  const planTasks = useMemo(() => studyPlan.flatMap((day) => day.tasks), [studyPlan]);
+  const completedPlanCount = planTasks.filter((task) => planProgress.completed[task.id]).length;
+  const totalPlanMinutes = planTasks.reduce((total, task) => total + task.minutes, 0);
+  const completedPlanMinutes = planTasks
+    .filter((task) => planProgress.completed[task.id])
+    .reduce((total, task) => total + task.minutes, 0);
+  const planCompletionRate = planTasks.length
+    ? Math.round((completedPlanCount / planTasks.length) * 100)
+    : 0;
+  const todayPlanIndex = Math.min(
+    13,
+    Math.max(
+      0,
+      Math.floor(
+        (new Date().setHours(0, 0, 0, 0) -
+          new Date(planProgress.startedAt).setHours(0, 0, 0, 0)) /
+          86_400_000,
+      ),
+    ),
   );
 
   const dbStats = useMemo(() => {
@@ -288,6 +446,14 @@ function App() {
       setStudyBankLoaded(true);
     });
   }, [phase, studyBankLoaded]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(planStorageKey, JSON.stringify(planProgress));
+    } catch {
+      // Ignore storage failures so the study flow still works in restricted contexts.
+    }
+  }, [planProgress]);
 
   useEffect(() => {
     if (phase !== 'exam' || sessionMode !== 'mock') return;
@@ -501,8 +667,8 @@ function App() {
     setPhase('exam');
   }, [selectedLevel, selectedTopics]);
 
-  const startPractice = useCallback(() => {
-    const builtQuestions = buildPracticeQuestions(practiceTopic, selectedLevel);
+  const startPracticeForTopic = useCallback((topic = practiceTopic, level = selectedLevel) => {
+    const builtQuestions = buildPracticeQuestions(topic, level);
     setSessionMode('practice');
     setQuestions(builtQuestions);
     setCurrentIndex(0);
@@ -517,6 +683,33 @@ function App() {
     setSessionId(buildSessionId());
     setPhase('exam');
   }, [practiceTopic, selectedLevel]);
+
+  const startPractice = useCallback(() => {
+    startPracticeForTopic();
+  }, [startPracticeForTopic]);
+
+  const startPlanMock = useCallback(
+    (task: StudyPlanTask) => {
+      const planTopics = task.topic
+        ? Array.from(new Set([task.topic, ...selectedTopics]))
+        : selectedTopics;
+      const builtQuestions = buildExamQuestions(planTopics, task.level ?? selectedLevel);
+      setSessionMode('mock');
+      setQuestions(builtQuestions);
+      setCurrentIndex(0);
+      setTotalTimeLeft(defaultExamSettings.totalTimeSec);
+      setQuestionTimeLeft(builtQuestions[0]?.timeLimitSec ?? defaultExamSettings.questionTimeSec);
+      setRecordings([]);
+      setStartedQuestionIds(new Set());
+      setQuestionStartedAt(null);
+      setReplayAvailableUntil(null);
+      setHasReplayedPrompt(false);
+      setClockNow(Date.now());
+      setSessionId(buildSessionId());
+      setPhase('exam');
+    },
+    [selectedLevel, selectedTopics],
+  );
 
   const nextQuestion = useCallback(() => {
     if (isStrictExam && !canMoveNext) return;
@@ -565,6 +758,43 @@ function App() {
     );
   };
 
+  const togglePlanTask = (taskId: string) => {
+    setPlanProgress((previous) => ({
+      ...previous,
+      completed: {
+        ...previous.completed,
+        [taskId]: !previous.completed[taskId],
+      },
+    }));
+  };
+
+  const updatePlanNote = (taskId: string, note: string) => {
+    setPlanProgress((previous) => ({
+      ...previous,
+      notes: {
+        ...previous.notes,
+        [taskId]: note,
+      },
+    }));
+  };
+
+  const resetStudyPlan = () => {
+    setPlanProgress({
+      startedAt: new Date().toISOString(),
+      completed: {},
+      notes: {},
+    });
+  };
+
+  const openPlanStudy = (task: StudyPlanTask) => {
+    setDbView(task.kind === 'memorize' ? 'answers' : 'questions');
+    setDbTopicFilter(task.topic ?? 'all');
+    setDbLevelFilter(task.level ?? 'all');
+    setDbTaskFilter('all');
+    setDbSearch('');
+    setPhase('database');
+  };
+
   const exportSession = () => {
     const payload = {
       sessionId,
@@ -590,6 +820,35 @@ function App() {
     const link = document.createElement('a');
     link.href = url;
     link.download = `${sessionId}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportStudyPortfolio = () => {
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      startedAt: planProgress.startedAt,
+      summary: {
+        totalTasks: planTasks.length,
+        completedTasks: completedPlanCount,
+        completionRate: planCompletionRate,
+        totalMinutes: totalPlanMinutes,
+        completedMinutes: completedPlanMinutes,
+      },
+      days: studyPlan.map((day) => ({
+        ...day,
+        tasks: day.tasks.map((task) => ({
+          ...task,
+          completed: !!planProgress.completed[task.id],
+          note: planProgress.notes[task.id] ?? '',
+        })),
+      })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'opic-2week-study-portfolio.json';
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -696,6 +955,10 @@ function App() {
             </select>
 
             <div className="mode-actions">
+              <button className="primary-button wide" onClick={() => setPhase('plan')}>
+                <CalendarDays size={19} />
+                2주 플랜
+              </button>
               <button className="primary-button wide" onClick={() => setPhase('survey')}>
                 <ListChecks size={19} />
                 모의고사
@@ -730,6 +993,149 @@ function App() {
                 <dd>문항별 90-150초</dd>
               </div>
             </dl>
+          </div>
+        </section>
+      )}
+
+      {phase === 'plan' && (
+        <section className="workspace">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">2-Week Portfolio</span>
+              <h1>2주 공부 플랜</h1>
+            </div>
+            <span className="selection-count">{planCompletionRate}% complete</span>
+          </div>
+
+          <div className="plan-stats">
+            <div className="db-stat-card">
+              <ClipboardCheck size={22} />
+              <strong>{completedPlanCount}/{planTasks.length}</strong>
+              <span>완료 과제</span>
+            </div>
+            <div className="db-stat-card">
+              <Timer size={22} />
+              <strong>{completedPlanMinutes}/{totalPlanMinutes}</strong>
+              <span>학습 분</span>
+            </div>
+            <div className="db-stat-card">
+              <CalendarDays size={22} />
+              <strong>D{todayPlanIndex + 1}</strong>
+              <span>오늘 플랜</span>
+            </div>
+          </div>
+
+          <div className="plan-list">
+            {studyPlan.map((day, index) => {
+              const dayCompleted = day.tasks.filter((task) => planProgress.completed[task.id]).length;
+              return (
+                <article
+                  className={`plan-day ${index === todayPlanIndex ? 'today' : ''}`}
+                  key={day.id}
+                >
+                  <div className="plan-day-header">
+                    <div>
+                      <span className="mini-pill">Day {day.day}</span>
+                      <h2>{day.focus}</h2>
+                    </div>
+                    <span>{day.dateLabel} · {dayCompleted}/{day.tasks.length}</span>
+                  </div>
+
+                  <div className="plan-tasks">
+                    {day.tasks.map((task) => {
+                      const completed = !!planProgress.completed[task.id];
+                      return (
+                        <div className={`plan-task ${completed ? 'done' : ''}`} key={task.id}>
+                          <button
+                            className="plan-check"
+                            onClick={() => togglePlanTask(task.id)}
+                            aria-pressed={completed}
+                            title="완료 여부"
+                          >
+                            <CheckCircle2 size={20} />
+                          </button>
+                          <div className="plan-task-body">
+                            <div className="plan-task-title">
+                              <span className="mini-pill">{planTaskLabels[task.kind]}</span>
+                              <strong>{task.title}</strong>
+                              <small>{task.minutes}분</small>
+                            </div>
+                            <p>{task.detail}</p>
+                            <div className="plan-task-actions">
+                              {task.kind === 'memorize' && (
+                                <>
+                                  <button
+                                    className="ghost-button small-button"
+                                    onClick={() => openPlanStudy(task)}
+                                  >
+                                    <FileSearch size={16} />
+                                    답변 보기
+                                  </button>
+                                  <button
+                                    className="ghost-button small-button"
+                                    onClick={() => {
+                                      setDbView('cards');
+                                      setDbStudyCategoryFilter('all');
+                                      setDbSearch('');
+                                      setPhase('database');
+                                    }}
+                                  >
+                                    <BookOpen size={16} />
+                                    암기 카드
+                                  </button>
+                                </>
+                              )}
+                              {task.kind === 'speaking' && (
+                                <button
+                                  className="ghost-button small-button"
+                                  onClick={() =>
+                                    startPracticeForTopic(
+                                      task.topic ?? practiceTopic,
+                                      task.level ?? selectedLevel,
+                                    )
+                                  }
+                                >
+                                  <Mic size={16} />
+                                  연습 시작
+                                </button>
+                              )}
+                              {task.kind === 'mock' && (
+                                <button
+                                  className="ghost-button small-button"
+                                  onClick={() => startPlanMock(task)}
+                                >
+                                  <Play size={16} />
+                                  실전 시작
+                                </button>
+                              )}
+                            </div>
+                            <textarea
+                              value={planProgress.notes[task.id] ?? ''}
+                              onChange={(event) => updatePlanNote(task.id, event.target.value)}
+                              placeholder="실제 수행 내용, 외운 표현, 부족했던 점"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="action-row">
+            <button className="secondary-button" onClick={resetStudyPlan}>
+              <RotateCcw size={18} />
+              플랜 초기화
+            </button>
+            <button className="secondary-button" onClick={() => setPhase('setup')}>
+              이전
+            </button>
+            <button className="primary-button" onClick={exportStudyPortfolio}>
+              <Download size={18} />
+              포트폴리오 내보내기
+            </button>
           </div>
         </section>
       )}
