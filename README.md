@@ -17,8 +17,20 @@ OPIc speaking practice simulator for study sessions. It follows the public OPIc-
 ```bash
 npm install
 npm run build:questions
+npm run build:icons
 npm run dev
 ```
+
+## Android Web App
+
+The app is configured as a PWA with `public/manifest.webmanifest`, `public/sw.js`, and PNG icons. Build and serve the production bundle to test install behavior:
+
+```bash
+npm run build
+npm run preview
+```
+
+On Android, microphone recording and PWA install require a secure context. Use `https://` in production, or test from `localhost`.
 
 ## Question DB
 
