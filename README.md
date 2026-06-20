@@ -16,19 +16,26 @@ OPIc speaking practice simulator for study sessions. It follows the public OPIc-
 
 ```bash
 npm install
+npm run build:questions
 npm run dev
 ```
 
 ## Question DB
 
-The dummy DB is in `src/data/questionBank.ts`.
+`db.pdf` is intentionally ignored by git. Put the source PDF at the repository root and run:
 
-When a PDF question file is provided, convert each prompt into this shape:
+```bash
+npm run build:questions
+```
+
+The generated question DB is written to `src/data/pdfQuestionBank.ts`, and the app reads it through `src/data/questionBank.ts`.
+
+Each generated prompt uses this shape:
 
 ```ts
 {
-  id: 'travel-004',
-  topic: 'travel',
+  id: 'domesticTravel-004',
+  topic: 'domesticTravel',
   level: 'intermediate',
   taskType: 'experience',
   prompt: 'Tell me about a trip you took recently...',
@@ -37,4 +44,4 @@ When a PDF question file is provided, convert each prompt into this shape:
 }
 ```
 
-The app reads from this local module, so replacing or extending the DB does not require changing the exam UI.
+The exam generator always starts with self-introduction, then builds topic sets, a role-play set, and final higher-difficulty questions according to the selected level.

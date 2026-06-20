@@ -26,9 +26,9 @@ import type { ExamPhase, ExamQuestion, LevelKey, RecordingEntry, TopicKey } from
 
 const groupLabels = {
   profile: '프로필',
-  daily: '일상',
-  interest: '관심사',
-  situation: '상황',
+  selected: '선택형 주제',
+  common: '공통형 주제',
+  situation: '상황/서비스',
 };
 
 const phaseLabels: Record<ExamPhase, string> = {
@@ -48,9 +48,16 @@ function App() {
     'home',
     'movies',
     'music',
-    'travel',
+    'tv',
     'restaurant',
     'shopping',
+    'vacationHome',
+    'domesticTravel',
+    'overseasTravel',
+    'internet',
+    'phone',
+    'weather',
+    'freeTime',
   ]);
   const [selectedLevel, setSelectedLevel] = useState<LevelKey>('intermediate');
   const [questions, setQuestions] = useState<ExamQuestion[]>([]);
@@ -74,7 +81,7 @@ function App() {
   const currentQuestion = questions[currentIndex];
   const progress = questions.length ? ((currentIndex + 1) / questions.length) * 100 : 0;
   const completedCount = recordings.length;
-  const canProceedSurvey = selectedTopics.length >= 4;
+  const canProceedSurvey = selectedTopics.length >= defaultExamSettings.minSurveyTopics;
 
   const groupedTopics = useMemo(
     () =>
@@ -436,7 +443,9 @@ function App() {
               <span className="eyebrow">Background Survey</span>
               <h1>시험에 반영할 주제 선택</h1>
             </div>
-            <span className="selection-count">{selectedTopics.length} selected</span>
+            <span className="selection-count">
+              {selectedTopics.length}/{defaultExamSettings.minSurveyTopics} selected
+            </span>
           </div>
 
           <div className="topic-groups">

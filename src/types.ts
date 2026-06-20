@@ -2,18 +2,33 @@ export type ExamPhase = 'setup' | 'survey' | 'level' | 'warmup' | 'exam' | 'revi
 
 export type TopicKey =
   | 'intro'
+  | 'furniture'
+  | 'recycling'
   | 'home'
-  | 'work'
-  | 'school'
-  | 'family'
-  | 'friends'
-  | 'movies'
+  | 'industry'
   | 'music'
-  | 'travel'
+  | 'movies'
+  | 'tv'
   | 'restaurant'
+  | 'gathering'
+  | 'vacationHome'
+  | 'food'
+  | 'health'
   | 'shopping'
-  | 'exercise'
+  | 'domesticTravel'
+  | 'overseasTravel'
+  | 'geography'
+  | 'internet'
+  | 'phone'
   | 'technology'
+  | 'weather'
+  | 'fashion'
+  | 'transportation'
+  | 'hotel'
+  | 'bank'
+  | 'reservation'
+  | 'freeTime'
+  | 'familyFriends'
   | 'holiday'
   | 'custom';
 
@@ -32,7 +47,7 @@ export type TaskType =
 export interface TopicOption {
   key: TopicKey;
   label: string;
-  group: 'profile' | 'daily' | 'interest' | 'situation';
+  group: 'profile' | 'selected' | 'common' | 'situation';
 }
 
 export interface LevelOption {
@@ -67,4 +82,5 @@ export interface ExamSettings {
   questionCount: number;
   totalTimeSec: number;
   questionTimeSec: number;
+  minSurveyTopics: number;
 }
