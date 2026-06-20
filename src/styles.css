@@ -29,7 +29,8 @@ body {
 }
 
 button,
-select {
+select,
+input {
   font: inherit;
 }
 
@@ -145,7 +146,9 @@ select {
 .interviewer-panel,
 .prompt-panel,
 .response-panel,
-.review-item {
+.review-item,
+.db-stat-card,
+.db-item {
   border: 1px solid rgba(73, 86, 102, 0.14);
   border-radius: 8px;
   background: rgba(255, 253, 248, 0.86);
@@ -273,6 +276,17 @@ select {
   margin-top: 18px;
 }
 
+.mode-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.mode-actions .wide {
+  margin-top: 0;
+}
+
 .stats-list {
   display: grid;
   gap: 14px;
@@ -327,6 +341,11 @@ select {
 }
 
 .topic-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.practice-layout {
   display: grid;
   gap: 14px;
 }
@@ -415,6 +434,10 @@ select {
   border-color: #1f6f78;
   background: #e9f7f4;
   box-shadow: inset 0 0 0 2px rgba(31, 111, 120, 0.12);
+}
+
+.compact-level-grid .level-card {
+  min-height: 132px;
 }
 
 .rehearsal-panel {
@@ -577,6 +600,26 @@ select {
   letter-spacing: 0;
 }
 
+.hidden-prompt {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  color: #23313c;
+}
+
+.hidden-prompt svg {
+  color: #1f6f78;
+}
+
+.hidden-prompt h1 {
+  font-size: clamp(2rem, 4vw, 4.4rem);
+}
+
+.hidden-prompt span {
+  color: #657181;
+  font-weight: 900;
+}
+
 .response-panel {
   display: flex;
   flex-direction: column;
@@ -589,6 +632,30 @@ select {
   justify-items: center;
   gap: 18px;
   padding-top: 16px;
+}
+
+.exam-rules {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.exam-rules span {
+  display: inline-grid;
+  place-items: center;
+  min-height: 34px;
+  border: 1px solid #ddd6ca;
+  border-radius: 8px;
+  background: #f3efe6;
+  color: #657181;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.exam-rules span.active {
+  border-color: rgba(31, 111, 120, 0.28);
+  background: #e9f7f4;
+  color: #173f46;
 }
 
 .record-ring {
@@ -667,6 +734,167 @@ select {
   width: 100%;
 }
 
+.db-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.db-stat-card {
+  display: grid;
+  gap: 8px;
+  min-height: 118px;
+  padding: 18px;
+}
+
+.db-stat-card svg {
+  color: #1f6f78;
+}
+
+.db-stat-card strong {
+  font-size: 1.8rem;
+}
+
+.db-stat-card span {
+  color: #657181;
+  font-weight: 800;
+}
+
+.db-stat-card.ok {
+  background: #f3fbf8;
+}
+
+.db-stat-card.warn {
+  background: #fff4e7;
+}
+
+.db-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.5fr) repeat(3, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.db-tabs {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(90px, 1fr));
+  gap: 6px;
+  width: min(420px, 100%);
+  margin-bottom: 12px;
+  padding: 4px;
+  border: 1px solid #d8d1c4;
+  border-radius: 8px;
+  background: #f3efe6;
+}
+
+.db-tabs button {
+  min-height: 36px;
+  border-radius: 6px;
+  background: transparent;
+  color: #657181;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.db-tabs button.active {
+  background: #1f6f78;
+  color: #fff;
+}
+
+.db-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  border: 1px solid #d5d0c6;
+  border-radius: 8px;
+  background: #fffdf8;
+  padding: 0 12px;
+}
+
+.db-search svg {
+  color: #657181;
+  flex: 0 0 auto;
+}
+
+.db-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #1c2430;
+}
+
+.db-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.db-levels span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border-radius: 999px;
+  background: #ece7dc;
+  color: #53606f;
+  padding: 0 10px;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.db-list {
+  display: grid;
+  gap: 10px;
+}
+
+.db-item {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.db-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.db-item p {
+  margin: 0;
+  color: #1f2a36;
+  line-height: 1.45;
+}
+
+.db-item h2 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.answer-item p {
+  white-space: pre-wrap;
+}
+
+.db-item small {
+  color: #657181;
+  line-height: 1.4;
+}
+
+.db-item-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.small-button {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 0.82rem;
+}
+
 .review-list {
   display: grid;
   gap: 12px;
@@ -720,7 +948,8 @@ select {
   .setup-grid,
   .exam-grid,
   .interviewer-panel,
-  .review-item {
+  .review-item,
+  .db-toolbar {
     grid-template-columns: 1fr;
   }
 
@@ -729,7 +958,9 @@ select {
   }
 
   .check-grid,
-  .level-grid {
+  .level-grid,
+  .db-stats,
+  .mode-actions {
     grid-template-columns: 1fr;
   }
 
@@ -767,7 +998,8 @@ select {
   }
 
   .topic-grid,
-  .control-grid {
+  .control-grid,
+  .exam-rules {
     grid-template-columns: 1fr;
   }
 

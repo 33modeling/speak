@@ -9,6 +9,9 @@ OPIc speaking practice simulator for study sessions. It follows the public OPIc-
 - 15-question mock interview from a local question bank
 - Browser TTS prompt playback
 - Microphone recording with per-question countdown
+- Strict mock mode with hidden prompts, replay window, and delayed NEXT
+- Topic-by-topic practice mode
+- Question DB management with prompt, model answer, and study-card views
 - Session review with audio playback
 - JSON export for the session log
 
@@ -42,6 +45,11 @@ npm run build:questions
 
 The generated question DB is written to `src/data/pdfQuestionBank.ts`, and the app reads it through `src/data/questionBank.ts`.
 
+The same command also generates `src/data/studyBank.ts`:
+
+- `modelAnswerBank`: model answers from answer sections
+- `studyCardBank`: text-type, vocabulary, pronunciation, and stress study cards
+
 Each generated prompt uses this shape:
 
 ```ts
@@ -56,4 +64,4 @@ Each generated prompt uses this shape:
 }
 ```
 
-The exam generator always starts with self-introduction, then builds topic sets, a role-play set, and final higher-difficulty questions according to the selected level.
+The exam generator always starts with self-introduction, then builds topic sets, a role-play set, and final higher-difficulty questions according to the selected level. The DB management screen can browse and export prompts, model answers, and study cards separately.

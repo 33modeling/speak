@@ -5,10 +5,14 @@ import {
   ChevronRight,
   Database,
   Download,
+  EyeOff,
+  FileSearch,
   Headphones,
+  ListChecks,
   Mic,
   Play,
   RotateCcw,
+  Search,
   Settings2,
   SkipForward,
   Square,
@@ -21,8 +25,25 @@ import {
   questionBank,
   topicOptions,
 } from './data/questionBank';
-import { buildExamQuestions, buildSessionId, formatTime, getTopicLabel } from './utils/exam';
-import type { ExamPhase, ExamQuestion, LevelKey, RecordingEntry, TopicKey } from './types';
+import {
+  buildExamQuestions,
+  buildPracticeQuestions,
+  buildSessionId,
+  formatTime,
+  getTopicLabel,
+} from './utils/exam';
+import type {
+  ExamPhase,
+  ExamQuestion,
+  LevelKey,
+  ModelAnswer,
+  RecordingEntry,
+  SessionMode,
+  StudyCard,
+  StudyCardCategory,
+  TaskType,
+  TopicKey,
+} from './types';
 
 const groupLabels = {
   profile: '프로필',
@@ -36,14 +57,35 @@ const phaseLabels: Record<ExamPhase, string> = {
   survey: '서베이',
   level: '난이도',
   warmup: '워밍업',
+  practice: '연습',
+  database: 'DB',
   exam: '시험',
   review: '리뷰',
 };
 
-const phaseOrder: ExamPhase[] = ['setup', 'survey', 'level', 'warmup', 'exam', 'review'];
+const phaseOrder: ExamPhase[] = ['setup', 'survey', 'level', 'warmup', 'practice', 'database', 'exam', 'review'];
+
+const taskLabels: Record<TaskType, string> = {
+  warmup: '자기소개',
+  description: '묘사',
+  routine: '루틴',
+  experience: '경험',
+  comparison: '비교',
+  roleplay: 'Role Play',
+  problem: '문제 해결',
+  opinion: '의견',
+};
+
+const studyCategoryLabels: Record<StudyCardCategory, string> = {
+  textType: '문장 훈련',
+  vocabulary: '표현/단어',
+  pronunciation: '발음',
+  stress: '강세',
+};
 
 function App() {
   const [phase, setPhase] = useState<ExamPhase>('setup');
+  const [sessionMode, setSessionMode] = useState<SessionMode>('mock');
   const [selectedTopics, setSelectedTopics] = useState<TopicKey[]>([
     'home',
     'movies',
@@ -72,16 +114,48 @@ function App() {
   const [voiceName, setVoiceName] = useState('');
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [startedQuestionIds, setStartedQuestionIds] = useState<Set<string>>(new Set());
+  const [practiceTopic, setPracticeTopic] = useState<TopicKey>('home');
+  const [dbTopicFilter, setDbTopicFilter] = useState<TopicKey | 'all'>('all');
+  const [dbLevelFilter, setDbLevelFilter] = useState<LevelKey | 'all'>('all');
+  const [dbTaskFilter, setDbTaskFilter] = useState<TaskType | 'all'>('all');
+  const [dbView, setDbView] = useState<'questions' | 'answers' | 'cards'>('questions');
+  const [dbStudyCategoryFilter, setDbStudyCategoryFilter] = useState<StudyCardCategory | 'all'>('all');
+  const [dbSearch, setDbSearch] = useState('');
+  const [modelAnswers, setModelAnswers] = useState<ModelAnswer[]>([]);
+  const [studyCards, setStudyCards] = useState<StudyCard[]>([]);
+  const [studyBankLoaded, setStudyBankLoaded] = useState(false);
+  const [questionStartedAt, setQuestionStartedAt] = useState<number | null>(null);
+  const [replayAvailableUntil, setReplayAvailableUntil] = useState<number | null>(null);
+  const [hasReplayedPrompt, setHasReplayedPrompt] = useState(false);
+  const [clockNow, setClockNow] = useState(Date.now());
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const recordStartedAtRef = useRef<number>(0);
+  const isRecordingRef = useRef(false);
+  const discardNextRecordingRef = useRef(false);
 
   const currentQuestion = questions[currentIndex];
   const progress = questions.length ? ((currentIndex + 1) / questions.length) * 100 : 0;
   const completedCount = recordings.length;
   const canProceedSurvey = selectedTopics.length >= defaultExamSettings.minSurveyTopics;
+  const isStrictExam = sessionMode === 'mock';
+  const questionStarted = currentQuestion ? startedQuestionIds.has(currentQuestion.id) : false;
+  const replaySecondsLeft =
+    isStrictExam && replayAvailableUntil
+      ? Math.max(0, Math.ceil((replayAvailableUntil - clockNow) / 1000))
+      : 0;
+  const nextUnlockSecondsLeft =
+    isStrictExam && questionStartedAt
+      ? Math.max(0, Math.ceil((questionStartedAt + 10_000 - clockNow) / 1000))
+      : 0;
+  const canReplayPrompt =
+    !!currentQuestion &&
+    questionStarted &&
+    !isSpeaking &&
+    (sessionMode === 'practice' ? !isRecording : !hasReplayedPrompt && replaySecondsLeft > 0);
+  const canMoveNext = sessionMode === 'practice' || (questionStarted && nextUnlockSecondsLeft === 0);
 
   const groupedTopics = useMemo(
     () =>
@@ -92,6 +166,95 @@ function App() {
       }, {}),
     [],
   );
+
+  const practiceTopics = useMemo(
+    () =>
+      topicOptions.filter(
+        (option) =>
+          option.key !== 'intro' && questionBank.some((question) => question.topic === option.key),
+      ),
+    [],
+  );
+
+  const dbStats = useMemo(() => {
+    const topicCount = new Set(questionBank.map((question) => question.topic)).size;
+    const roleplayCount = questionBank.filter((question) =>
+      question.tags.includes('source:roleplay'),
+    ).length;
+    const duplicatePrompts = questionBank.length - new Set(questionBank.map((question) => question.prompt)).size;
+    const levelCounts = levelOptions.map((level) => ({
+      key: level.key,
+      label: level.label,
+      count: questionBank.filter((question) => question.level === level.key).length,
+    }));
+
+    return {
+      total: questionBank.length,
+      answers: modelAnswers.length,
+      studyCards: studyCards.length,
+      topicCount,
+      roleplayCount,
+      duplicatePrompts,
+      levelCounts,
+    };
+  }, [modelAnswers.length, studyCards.length]);
+
+  const dbFilteredQuestions = useMemo(() => {
+    const query = dbSearch.trim().toLowerCase();
+    return questionBank
+      .filter((question) => dbTopicFilter === 'all' || question.topic === dbTopicFilter)
+      .filter((question) => dbLevelFilter === 'all' || question.level === dbLevelFilter)
+      .filter((question) => dbTaskFilter === 'all' || question.taskType === dbTaskFilter)
+      .filter((question) => {
+        if (!query) return true;
+        return (
+          question.prompt.toLowerCase().includes(query) ||
+          getTopicLabel(question.topic).toLowerCase().includes(query) ||
+          question.tags.some((tag) => tag.toLowerCase().includes(query))
+        );
+      })
+      .slice(0, 80);
+  }, [dbLevelFilter, dbSearch, dbTaskFilter, dbTopicFilter]);
+
+  const dbFilteredAnswers = useMemo(() => {
+    const query = dbSearch.trim().toLowerCase();
+    return modelAnswers
+      .filter((answer) => dbTopicFilter === 'all' || answer.topic === dbTopicFilter)
+      .filter((answer) => dbLevelFilter === 'all' || answer.level === dbLevelFilter)
+      .filter((answer) => dbTaskFilter === 'all' || answer.taskType === dbTaskFilter)
+      .filter((answer) => {
+        if (!query) return true;
+        return (
+          answer.title.toLowerCase().includes(query) ||
+          answer.answer.toLowerCase().includes(query) ||
+          getTopicLabel(answer.topic).toLowerCase().includes(query) ||
+          answer.tags.some((tag) => tag.toLowerCase().includes(query))
+        );
+      })
+      .slice(0, 80);
+  }, [dbLevelFilter, dbSearch, dbTaskFilter, dbTopicFilter, modelAnswers]);
+
+  const dbFilteredCards = useMemo(() => {
+    const query = dbSearch.trim().toLowerCase();
+    return studyCards
+      .filter((card) => dbStudyCategoryFilter === 'all' || card.category === dbStudyCategoryFilter)
+      .filter((card) => {
+        if (!query) return true;
+        return (
+          card.title.toLowerCase().includes(query) ||
+          card.content.toLowerCase().includes(query) ||
+          card.tags.some((tag) => tag.toLowerCase().includes(query))
+        );
+      })
+      .slice(0, 80);
+  }, [dbSearch, dbStudyCategoryFilter, studyCards]);
+
+  const dbCurrentCount =
+    dbView === 'questions'
+      ? dbFilteredQuestions.length
+      : dbView === 'answers'
+        ? dbFilteredAnswers.length
+        : dbFilteredCards.length;
 
   const selectedVoice = useMemo(
     () =>
@@ -117,7 +280,17 @@ function App() {
   }, [voiceName]);
 
   useEffect(() => {
-    if (phase !== 'exam') return;
+    if (phase !== 'database' || studyBankLoaded) return;
+
+    import('./data/studyBank').then((module) => {
+      setModelAnswers(module.modelAnswerBank);
+      setStudyCards(module.studyCardBank);
+      setStudyBankLoaded(true);
+    });
+  }, [phase, studyBankLoaded]);
+
+  useEffect(() => {
+    if (phase !== 'exam' || sessionMode !== 'mock') return;
     if (totalTimeLeft <= 0) {
       stopRecording();
       setPhase('review');
@@ -129,7 +302,17 @@ function App() {
     }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [phase, totalTimeLeft]);
+  }, [phase, sessionMode, totalTimeLeft]);
+
+  useEffect(() => {
+    if (phase !== 'exam') return;
+
+    const timer = window.setInterval(() => {
+      setClockNow(Date.now());
+    }, 500);
+
+    return () => window.clearInterval(timer);
+  }, [phase]);
 
   useEffect(() => {
     if (!isRecording) return;
@@ -191,14 +374,19 @@ function App() {
     [selectedVoice],
   );
 
-  const stopRecording = useCallback(() => {
-    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-      recorderRef.current.stop();
+  const stopRecording = useCallback((discard = false) => {
+    const recorder = recorderRef.current;
+
+    if (recorder && recorder.state !== 'inactive') {
+      discardNextRecordingRef.current = discard;
+      recorder.stop();
+    } else if (discard) {
+      discardNextRecordingRef.current = false;
     }
   }, []);
 
   const startRecording = useCallback(async () => {
-    if (!currentQuestion || isRecording) return;
+    if (!currentQuestion || isRecordingRef.current) return;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -213,64 +401,133 @@ function App() {
       };
 
       recorder.onstop = () => {
+        const shouldDiscard = discardNextRecordingRef.current;
+        discardNextRecordingRef.current = false;
+        isRecordingRef.current = false;
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
         const durationSec = Math.max(1, Math.round((Date.now() - recordStartedAtRef.current) / 1000));
         const blobUrl = URL.createObjectURL(blob);
-        setRecordings((previous) => {
-          const next = previous.filter((entry) => entry.questionId !== currentQuestion.id);
-          return [
-            ...next,
-            {
-              questionId: currentQuestion.id,
-              sequence: currentQuestion.sequence,
-              durationSec,
-              blobUrl,
-              createdAt: new Date().toISOString(),
-            },
-          ].sort((a, b) => a.sequence - b.sequence);
-        });
+        if (shouldDiscard) {
+          URL.revokeObjectURL(blobUrl);
+        } else {
+          setRecordings((previous) => {
+            const next = previous.filter((entry) => entry.questionId !== currentQuestion.id);
+            return [
+              ...next,
+              {
+                questionId: currentQuestion.id,
+                sequence: currentQuestion.sequence,
+                durationSec,
+                blobUrl,
+                createdAt: new Date().toISOString(),
+              },
+            ].sort((a, b) => a.sequence - b.sequence);
+          });
+        }
         setIsRecording(false);
         stream.getTracks().forEach((track) => track.stop());
       };
 
       recorder.start();
       setMicStatus('ready');
+      isRecordingRef.current = true;
       setIsRecording(true);
     } catch {
       setMicStatus('blocked');
+      isRecordingRef.current = false;
       setIsRecording(false);
     }
-  }, [currentQuestion, isRecording]);
+  }, [currentQuestion]);
 
   const beginQuestion = useCallback(() => {
     if (!currentQuestion) return;
 
+    const startedAt = Date.now();
     setQuestionTimeLeft(currentQuestion.timeLimitSec);
+    setQuestionStartedAt(startedAt);
+    setReplayAvailableUntil(null);
+    setHasReplayedPrompt(false);
+    setClockNow(startedAt);
     setStartedQuestionIds((previous) => new Set(previous).add(currentQuestion.id));
-    speak(currentQuestion.prompt, startRecording);
-  }, [currentQuestion, speak, startRecording]);
+    speak(currentQuestion.prompt, () => {
+      if (isStrictExam) {
+        setReplayAvailableUntil(Date.now() + 5_000);
+      }
+      startRecording();
+    });
+  }, [currentQuestion, isStrictExam, speak, startRecording]);
 
   const replayPrompt = useCallback(() => {
-    if (!currentQuestion || isRecording) return;
+    if (!currentQuestion || isSpeaking) return;
+
+    if (isStrictExam) {
+      if (!canReplayPrompt) return;
+      setHasReplayedPrompt(true);
+      setReplayAvailableUntil(null);
+      if (isRecordingRef.current) {
+        stopRecording(true);
+      }
+      speak(currentQuestion.prompt, startRecording);
+      return;
+    }
+
+    if (isRecording) return;
     speak(currentQuestion.prompt);
-  }, [currentQuestion, isRecording, speak]);
+  }, [
+    canReplayPrompt,
+    currentQuestion,
+    isRecording,
+    isSpeaking,
+    isStrictExam,
+    speak,
+    startRecording,
+    stopRecording,
+  ]);
 
   const startExam = useCallback(() => {
     const builtQuestions = buildExamQuestions(selectedTopics, selectedLevel);
+    setSessionMode('mock');
     setQuestions(builtQuestions);
     setCurrentIndex(0);
     setTotalTimeLeft(defaultExamSettings.totalTimeSec);
     setQuestionTimeLeft(builtQuestions[0]?.timeLimitSec ?? defaultExamSettings.questionTimeSec);
     setRecordings([]);
     setStartedQuestionIds(new Set());
+    setQuestionStartedAt(null);
+    setReplayAvailableUntil(null);
+    setHasReplayedPrompt(false);
+    setClockNow(Date.now());
     setSessionId(buildSessionId());
     setPhase('exam');
   }, [selectedLevel, selectedTopics]);
 
+  const startPractice = useCallback(() => {
+    const builtQuestions = buildPracticeQuestions(practiceTopic, selectedLevel);
+    setSessionMode('practice');
+    setQuestions(builtQuestions);
+    setCurrentIndex(0);
+    setTotalTimeLeft(0);
+    setQuestionTimeLeft(builtQuestions[0]?.timeLimitSec ?? defaultExamSettings.questionTimeSec);
+    setRecordings([]);
+    setStartedQuestionIds(new Set());
+    setQuestionStartedAt(null);
+    setReplayAvailableUntil(null);
+    setHasReplayedPrompt(false);
+    setClockNow(Date.now());
+    setSessionId(buildSessionId());
+    setPhase('exam');
+  }, [practiceTopic, selectedLevel]);
+
   const nextQuestion = useCallback(() => {
+    if (isStrictExam && !canMoveNext) return;
+
     stopRecording();
     window.speechSynthesis?.cancel();
     setIsSpeaking(false);
+    setQuestionStartedAt(null);
+    setReplayAvailableUntil(null);
+    setHasReplayedPrompt(false);
+    setClockNow(Date.now());
 
     if (currentIndex >= questions.length - 1) {
       setPhase('review');
@@ -280,10 +537,10 @@ function App() {
     const nextIndex = currentIndex + 1;
     setCurrentIndex(nextIndex);
     setQuestionTimeLeft(questions[nextIndex]?.timeLimitSec ?? defaultExamSettings.questionTimeSec);
-  }, [currentIndex, questions, stopRecording]);
+  }, [canMoveNext, currentIndex, isStrictExam, questions, stopRecording]);
 
   const resetExam = useCallback(() => {
-    stopRecording();
+    stopRecording(true);
     window.speechSynthesis?.cancel();
     recordings.forEach((entry) => URL.revokeObjectURL(entry.blobUrl));
     setQuestions([]);
@@ -292,6 +549,10 @@ function App() {
     setTotalTimeLeft(defaultExamSettings.totalTimeSec);
     setQuestionTimeLeft(defaultExamSettings.questionTimeSec);
     setStartedQuestionIds(new Set());
+    setQuestionStartedAt(null);
+    setReplayAvailableUntil(null);
+    setHasReplayedPrompt(false);
+    setSessionMode('mock');
     setPhase('setup');
   }, [recordings, stopRecording]);
 
@@ -307,7 +568,9 @@ function App() {
   const exportSession = () => {
     const payload = {
       sessionId,
+      sessionMode,
       selectedTopics,
+      practiceTopic: sessionMode === 'practice' ? practiceTopic : null,
       selectedLevel,
       totalQuestions: questions.length,
       completedCount,
@@ -327,6 +590,31 @@ function App() {
     const link = document.createElement('a');
     link.href = url;
     link.download = `${sessionId}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportQuestionDb = () => {
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      filters: {
+        view: dbView,
+        topic: dbTopicFilter,
+        level: dbLevelFilter,
+        taskType: dbTaskFilter,
+        studyCategory: dbStudyCategoryFilter,
+        search: dbSearch,
+      },
+      stats: dbStats,
+      questions: dbView === 'questions' ? dbFilteredQuestions : [],
+      modelAnswers: dbView === 'answers' ? dbFilteredAnswers : [],
+      studyCards: dbView === 'cards' ? dbFilteredCards : [],
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `opic-${dbView}-db.json`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -387,7 +675,7 @@ function App() {
                 <Database size={24} />
                 <strong>문제 DB</strong>
                 <span>{questionBank.length} prompts</span>
-                <span className="mini-pill">더미</span>
+                <span className="mini-pill">PDF</span>
               </div>
             </div>
 
@@ -407,10 +695,20 @@ function App() {
               ))}
             </select>
 
-            <button className="primary-button wide" onClick={() => setPhase('survey')}>
-              서베이 시작
-              <ChevronRight size={20} />
-            </button>
+            <div className="mode-actions">
+              <button className="primary-button wide" onClick={() => setPhase('survey')}>
+                <ListChecks size={19} />
+                모의고사
+              </button>
+              <button className="secondary-button wide" onClick={() => setPhase('practice')}>
+                <BookOpen size={19} />
+                주제 연습
+              </button>
+              <button className="secondary-button wide" onClick={() => setPhase('database')}>
+                <FileSearch size={19} />
+                DB 관리
+              </button>
+            </div>
           </div>
 
           <div className="panel compact-panel">
@@ -483,6 +781,269 @@ function App() {
             >
               난이도 선택
               <ChevronRight size={20} />
+            </button>
+          </div>
+        </section>
+      )}
+
+      {phase === 'practice' && (
+        <section className="workspace">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">Topic Practice</span>
+              <h1>주제별 연습</h1>
+            </div>
+            <span className="selection-count">{getTopicLabel(practiceTopic)}</span>
+          </div>
+
+          <div className="practice-layout">
+            <section className="topic-group">
+              <h2>주제</h2>
+              <div className="topic-grid">
+                {practiceTopics.map((option) => (
+                  <button
+                    key={option.key}
+                    className={`topic-chip ${practiceTopic === option.key ? 'selected' : ''}`}
+                    onClick={() => setPracticeTopic(option.key)}
+                  >
+                    <CheckCircle2 size={17} />
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="topic-group">
+              <h2>난이도</h2>
+              <div className="level-grid compact-level-grid">
+                {levelOptions.map((option) => (
+                  <button
+                    key={option.key}
+                    className={`level-card ${selectedLevel === option.key ? 'selected' : ''}`}
+                    onClick={() => setSelectedLevel(option.key)}
+                  >
+                    <strong>{option.label}</strong>
+                    <span>{option.target}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          </div>
+
+          <div className="action-row">
+            <button className="secondary-button" onClick={() => setPhase('setup')}>
+              이전
+            </button>
+            <button className="primary-button" onClick={startPractice}>
+              연습 시작
+              <ChevronRight size={20} />
+            </button>
+          </div>
+        </section>
+      )}
+
+      {phase === 'database' && (
+        <section className="workspace">
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">Question DB</span>
+              <h1>문제 DB 관리</h1>
+            </div>
+            <span className="selection-count">{dbCurrentCount}</span>
+          </div>
+
+          <div className="db-stats">
+            <div className="db-stat-card">
+              <Database size={22} />
+              <strong>{dbStats.total}</strong>
+              <span>전체 문항</span>
+            </div>
+            <div className="db-stat-card">
+              <ListChecks size={22} />
+              <strong>{dbStats.answers}</strong>
+              <span>모범 답변</span>
+            </div>
+            <div className="db-stat-card">
+              <BookOpen size={22} />
+              <strong>{dbStats.studyCards}</strong>
+              <span>암기 카드</span>
+            </div>
+            <div className={`db-stat-card ${dbStats.duplicatePrompts === 0 ? 'ok' : 'warn'}`}>
+              <CheckCircle2 size={22} />
+              <strong>{dbStats.duplicatePrompts}</strong>
+              <span>중복 프롬프트</span>
+            </div>
+          </div>
+
+          <div className="db-tabs" aria-label="DB view">
+            <button
+              className={dbView === 'questions' ? 'active' : ''}
+              onClick={() => setDbView('questions')}
+            >
+              문제
+            </button>
+            <button
+              className={dbView === 'answers' ? 'active' : ''}
+              onClick={() => setDbView('answers')}
+            >
+              모범 답변
+            </button>
+            <button
+              className={dbView === 'cards' ? 'active' : ''}
+              onClick={() => setDbView('cards')}
+            >
+              단어 암기
+            </button>
+          </div>
+
+          <div className="db-toolbar">
+            <label className="db-search">
+              <Search size={18} />
+              <input
+                value={dbSearch}
+                onChange={(event) => setDbSearch(event.target.value)}
+                placeholder="Search prompts or tags"
+              />
+            </label>
+            {dbView !== 'cards' && (
+              <select
+                value={dbTopicFilter}
+                onChange={(event) => setDbTopicFilter(event.target.value as TopicKey | 'all')}
+                aria-label="Topic filter"
+              >
+                <option value="all">All topics</option>
+                {practiceTopics.map((topic) => (
+                  <option key={topic.key} value={topic.key}>
+                    {topic.label}
+                  </option>
+                ))}
+              </select>
+            )}
+            {dbView !== 'cards' && (
+              <select
+                value={dbLevelFilter}
+                onChange={(event) => setDbLevelFilter(event.target.value as LevelKey | 'all')}
+                aria-label="Level filter"
+              >
+                <option value="all">All levels</option>
+                {levelOptions.map((level) => (
+                  <option key={level.key} value={level.key}>
+                    {level.label}
+                  </option>
+                ))}
+              </select>
+            )}
+            {dbView === 'cards' ? (
+              <select
+                value={dbStudyCategoryFilter}
+                onChange={(event) =>
+                  setDbStudyCategoryFilter(event.target.value as StudyCardCategory | 'all')
+                }
+                aria-label="Study category filter"
+              >
+                <option value="all">All cards</option>
+                {Object.entries(studyCategoryLabels).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select
+                value={dbTaskFilter}
+                onChange={(event) => setDbTaskFilter(event.target.value as TaskType | 'all')}
+                aria-label="Task filter"
+              >
+                <option value="all">All tasks</option>
+                {Object.entries(taskLabels).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {dbView !== 'cards' && (
+            <div className="db-levels">
+              {dbStats.levelCounts.map((level) => (
+                <span key={level.key}>
+                  {level.label}: {level.count}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className="db-list">
+            {dbView === 'questions' &&
+              dbFilteredQuestions.map((question) => (
+                <article className="db-item" key={question.id}>
+                  <div className="db-item-meta">
+                    <span className="mini-pill">{getTopicLabel(question.topic)}</span>
+                    <span className="mini-pill">{question.level}</span>
+                    <span className="mini-pill">{taskLabels[question.taskType]}</span>
+                  </div>
+                  <p>{question.prompt}</p>
+                  <small>{question.id} · {question.tags.slice(0, 3).join(' · ')}</small>
+                  <div className="db-item-actions">
+                    <button className="ghost-button small-button" onClick={() => speak(question.prompt)}>
+                      <Volume2 size={16} />
+                      듣기
+                    </button>
+                  </div>
+                </article>
+              ))}
+
+            {dbView === 'answers' &&
+              dbFilteredAnswers.map((answer) => (
+                <article className="db-item answer-item" key={answer.id}>
+                  <div className="db-item-meta">
+                    <span className="mini-pill">{getTopicLabel(answer.topic)}</span>
+                    <span className="mini-pill">{answer.level}</span>
+                    <span className="mini-pill">{taskLabels[answer.taskType]}</span>
+                  </div>
+                  <h2>{answer.title}</h2>
+                  <p>{answer.answer}</p>
+                  <small>{answer.id} · {answer.tags.slice(0, 3).join(' · ')}</small>
+                  <div className="db-item-actions">
+                    <button className="ghost-button small-button" onClick={() => speak(answer.answer)}>
+                      <Volume2 size={16} />
+                      듣기
+                    </button>
+                  </div>
+                </article>
+              ))}
+
+            {dbView === 'cards' &&
+              dbFilteredCards.map((card) => (
+                <article className="db-item answer-item" key={card.id}>
+                  <div className="db-item-meta">
+                    <span className="mini-pill">{studyCategoryLabels[card.category]}</span>
+                    {card.tags.slice(0, 2).map((tag) => (
+                      <span className="mini-pill" key={tag}>
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                  <h2>{card.title}</h2>
+                  <p>{card.content}</p>
+                  <div className="db-item-actions">
+                    <button className="ghost-button small-button" onClick={() => speak(card.content)}>
+                      <Volume2 size={16} />
+                      듣기
+                    </button>
+                  </div>
+                </article>
+              ))}
+          </div>
+
+          <div className="action-row">
+            <button className="secondary-button" onClick={() => setPhase('setup')}>
+              이전
+            </button>
+            <button className="primary-button" onClick={exportQuestionDb}>
+              <Download size={18} />
+              DB 내보내기
             </button>
           </div>
         </section>
@@ -581,10 +1142,17 @@ function App() {
               <strong>{getTopicLabel(currentQuestion.topic)}</strong>
             </div>
             <div className="timer-strip">
-              <span>
-                <Timer size={17} />
-                {formatTime(totalTimeLeft)}
-              </span>
+              {sessionMode === 'mock' ? (
+                <span>
+                  <Timer size={17} />
+                  {formatTime(totalTimeLeft)}
+                </span>
+              ) : (
+                <span>
+                  <BookOpen size={17} />
+                  {currentQuestion.sequence}/{questions.length}
+                </span>
+              )}
               <span className={questionTimeLeft <= 20 ? 'danger' : ''}>
                 <Mic size={17} />
                 {formatTime(questionTimeLeft)}
@@ -605,7 +1173,15 @@ function App() {
                 <span className="mini-pill">{currentQuestion.taskType}</span>
                 <span className="mini-pill">{currentQuestion.level}</span>
               </div>
-              <h1>{currentQuestion.prompt}</h1>
+              {isStrictExam ? (
+                <div className="hidden-prompt">
+                  <EyeOff size={42} />
+                  <h1>Voice Prompt</h1>
+                  <span>{questionStarted ? 'Recording window active' : 'Ready'}</span>
+                </div>
+              ) : (
+                <h1>{currentQuestion.prompt}</h1>
+              )}
             </section>
 
             <aside className="response-panel">
@@ -629,11 +1205,20 @@ function App() {
                 </div>
               </div>
 
+              <div className="exam-rules">
+                <span className={replaySecondsLeft > 0 ? 'active' : ''}>
+                  다시듣기 {sessionMode === 'practice' ? 'free' : `${replaySecondsLeft}s`}
+                </span>
+                <span className={canMoveNext ? 'active' : ''}>
+                  NEXT {sessionMode === 'practice' ? 'free' : nextUnlockSecondsLeft > 0 ? `${nextUnlockSecondsLeft}s` : 'ready'}
+                </span>
+              </div>
+
               <div className="control-grid">
                 <button
                   className="primary-button"
                   onClick={beginQuestion}
-                  disabled={isSpeaking || isRecording}
+                  disabled={isSpeaking || isRecording || (isStrictExam && questionStarted)}
                   title="문항을 듣고 답변 녹음을 시작합니다"
                 >
                   <Play size={19} />
@@ -642,7 +1227,7 @@ function App() {
                 <button
                   className="secondary-button"
                   onClick={replayPrompt}
-                  disabled={isSpeaking || isRecording}
+                  disabled={!canReplayPrompt}
                   title="현재 문항을 다시 듣습니다"
                 >
                   <Volume2 size={19} />
@@ -650,26 +1235,33 @@ function App() {
                 </button>
                 <button
                   className="secondary-button"
-                  onClick={stopRecording}
-                  disabled={!isRecording}
+                  onClick={() => stopRecording()}
+                  disabled={!isRecording || isStrictExam}
                   title="현재 답변 녹음을 종료합니다"
                 >
                   <Square size={18} />
                   종료
                 </button>
-                <button className="secondary-button" onClick={nextQuestion} title="다음 문항으로 이동합니다">
+                <button
+                  className="secondary-button"
+                  onClick={nextQuestion}
+                  disabled={!canMoveNext}
+                  title="다음 문항으로 이동합니다"
+                >
                   <SkipForward size={19} />
                   다음
                 </button>
               </div>
 
-              <div className="recording-list compact">
-                {recordings
-                  .filter((entry) => entry.questionId === currentQuestion.id)
-                  .map((entry) => (
-                    <audio key={entry.questionId} controls src={entry.blobUrl} />
-                  ))}
-              </div>
+              {sessionMode === 'practice' && (
+                <div className="recording-list compact">
+                  {recordings
+                    .filter((entry) => entry.questionId === currentQuestion.id)
+                    .map((entry) => (
+                      <audio key={entry.questionId} controls src={entry.blobUrl} />
+                    ))}
+                </div>
+              )}
             </aside>
           </div>
         </section>

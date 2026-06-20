@@ -243,6 +243,32 @@ export function buildExamQuestions(
     }));
 }
 
+export function buildPracticeQuestions(
+  topic: TopicKey,
+  selectedLevel: LevelKey,
+  count = 10,
+): ExamQuestion[] {
+  const topicPool = questionBank.filter(
+    (question) => question.topic === topic && question.topic !== 'intro',
+  );
+
+  const regular = shuffle(topicPool.filter((question) => !hasTag(question, 'source:roleplay')));
+  const roleplay = shuffle(topicPool.filter((question) => hasTag(question, 'source:roleplay')));
+
+  return dedupe([...regular, ...roleplay])
+    .sort((a, b) => {
+      const levelDelta = levelDistance(a, selectedLevel) - levelDistance(b, selectedLevel);
+      if (levelDelta !== 0) return levelDelta;
+      return taskOrder.indexOf(a.taskType) - taskOrder.indexOf(b.taskType);
+    })
+    .slice(0, count)
+    .map((question, index) => ({
+      ...question,
+      sequence: index + 1,
+      timeLimitSec: question.timeLimitSec || defaultExamSettings.questionTimeSec,
+    }));
+}
+
 export function buildSessionId(): string {
   return `opic-${new Date().toISOString().replace(/[:.]/g, '-')}`;
 }

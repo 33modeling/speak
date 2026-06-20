@@ -1,4 +1,14 @@
-export type ExamPhase = 'setup' | 'survey' | 'level' | 'warmup' | 'exam' | 'review';
+export type ExamPhase =
+  | 'setup'
+  | 'survey'
+  | 'level'
+  | 'warmup'
+  | 'practice'
+  | 'database'
+  | 'exam'
+  | 'review';
+
+export type SessionMode = 'mock' | 'practice';
 
 export type TopicKey =
   | 'intro'
@@ -83,4 +93,24 @@ export interface ExamSettings {
   totalTimeSec: number;
   questionTimeSec: number;
   minSurveyTopics: number;
+}
+
+export interface ModelAnswer {
+  id: string;
+  topic: TopicKey;
+  level: LevelKey;
+  taskType: TaskType;
+  title: string;
+  answer: string;
+  tags: string[];
+}
+
+export type StudyCardCategory = 'textType' | 'vocabulary' | 'pronunciation' | 'stress';
+
+export interface StudyCard {
+  id: string;
+  title: string;
+  category: StudyCardCategory;
+  content: string;
+  tags: string[];
 }

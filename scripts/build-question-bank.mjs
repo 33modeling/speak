@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 const pdfPath = new URL('../db.pdf', import.meta.url);
 const outputPath = new URL('../src/data/pdfQuestionBank.ts', import.meta.url);
+const studyOutputPath = new URL('../src/data/studyBank.ts', import.meta.url);
 
 const topicMatchers = [
   ['intro', [/자기소개/i]],
@@ -46,6 +47,10 @@ const promptSignalPattern =
   /(\?|tell me|describe|what|how|why|where|who|when|call|ask|i’d like|i'd like|i’m sorry|i'm sorry|that’s the end|that's the end|you indicated|you want|you borrowed|you have|imagine|have you ever|some people|please|can you|let’s start|let's start)/i;
 const answerOpeningPattern =
   /^(hi[,. ]|hello[,. ]|well[, ]|let me see|back in the day|these days[, ] i|i usually|i often|i have|i remember|recently[, ] i|overall,|garbage is|there is clearly)/i;
+const questionOpeningPattern =
+  /^(i’d like|i'd like|i’m sorry|i'm sorry|that’s the end|that's the end|tell me|describe|what|how|have you ever|you indicated|you want|call|ask|imagine|let’s start|let's start)/i;
+const studyPagePattern =
+  /(TEXT TYPE|영어 음운|영어 발음|영어 취약한 발음|영어 강세|슈와|설탄음|경음화|L vs R|TH 발음|F\/V 발음)/i;
 
 function extractText() {
   if (!existsSync(pdfPath)) {
@@ -120,6 +125,50 @@ function normalizePrompt(lines) {
     .join(' ')
     .replace(/\s+([,?.!])/g, '$1')
     .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function lineHasAnswerText(line) {
+  const cleaned = cleanLine(line);
+  if (!cleaned) return false;
+  if (/^\d+$/.test(cleaned)) return false;
+  if (/^\+/.test(cleaned)) return false;
+  if (/^\d+\s+\[(Novice|Int|Adv)\]/.test(cleaned)) return false;
+  if (/^\[(Novice|Int|Adv)\]/.test(cleaned)) return false;
+  if (headingPattern.test(cleaned)) return false;
+  if (/^(AI 주제|오픽|응시자|난이도|Format|TEXT TYPE)\b/.test(cleaned)) return false;
+
+  const englishWords = cleaned.match(/[A-Za-z]+/g) ?? [];
+  return englishWords.length >= 3;
+}
+
+function collectAnswerLines(rawLines, startIndex, endIndex) {
+  const block = [];
+  let started = false;
+
+  for (let index = startIndex; index < endIndex; index += 1) {
+    const rawLine = rawLines[index];
+    const cleaned = cleanLine(rawLine);
+
+    if (started && rawLine.includes('\f')) break;
+    if (started && headingPattern.test(cleaned)) break;
+    if (started && studyPagePattern.test(cleaned)) break;
+
+    if (lineHasAnswerText(rawLine)) {
+      started = true;
+      block.push(rawLine);
+    }
+  }
+
+  return block;
+}
+
+function normalizeAnswer(lines) {
+  return lines
+    .map(cleanLine)
+    .filter(lineHasAnswerText)
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
@@ -238,15 +287,153 @@ function parseQuestions(text) {
   return questions;
 }
 
+function collectTaggedEntries(text) {
+  const rawLines = text.split(/\r?\n/);
+  let currentHeading = '';
+  let currentTopic = 'custom';
+  let isRoleplaySection = false;
+  const tagged = [];
+
+  rawLines.forEach((line, index) => {
+    const cleaned = cleanLine(line);
+    if (!cleaned) return;
+
+    if (headingPattern.test(cleaned)) {
+      currentHeading = cleaned;
+      currentTopic = detectTopic(cleaned, currentTopic);
+      isRoleplaySection = /ROLE PLAY|RP\s|4세트/.test(cleaned);
+    }
+
+    const match = cleaned.match(/^(?:\d+\s+)?\[(Novice|Int|Adv)\]\s*(.*)$/);
+    if (match) {
+      tagged.push({
+        index,
+        level: toLevel(match[1]),
+        summary: match[2],
+        heading: currentHeading,
+        topic: detectTopic(`${currentHeading} ${match[2]}`, currentTopic),
+        isRoleplay: isRoleplaySection,
+        isAnswerSection: answerHeadingPattern.test(currentHeading),
+      });
+    }
+  });
+
+  return { rawLines, tagged };
+}
+
+function parseModelAnswers(text) {
+  const { rawLines, tagged } = collectTaggedEntries(text);
+  const seenAnswers = new Set();
+  const answers = [];
+
+  tagged.forEach((entry, index) => {
+    const nextIndex = tagged[index + 1]?.index ?? rawLines.length;
+    const answer = normalizeAnswer(collectAnswerLines(rawLines, entry.index + 1, nextIndex));
+    const englishWords = answer.match(/[A-Za-z]+/g) ?? [];
+
+    if (englishWords.length < 18) return;
+    if (englishWords.length > 280) return;
+    if (questionOpeningPattern.test(answer)) return;
+    if (!entry.isAnswerSection && !answerOpeningPattern.test(answer)) return;
+    if (promptSignalPattern.test(answer) && !entry.isAnswerSection && !answerOpeningPattern.test(answer)) return;
+    if (seenAnswers.has(answer)) return;
+    seenAnswers.add(answer);
+
+    const taskType = entry.level === 'novice' ? 'warmup' : detectTaskType({
+      prompt: entry.summary,
+      summary: entry.summary,
+      isRoleplay: entry.isRoleplay,
+    });
+    const topic = entry.level === 'novice' ? 'intro' : entry.topic;
+
+    answers.push({
+      id: `answer-${topic}-${String(answers.length + 1).padStart(4, '0')}`,
+      topic,
+      level: entry.level,
+      taskType,
+      title: entry.summary || getTitleFromHeading(entry.heading),
+      answer,
+      tags: [
+        'pdf',
+        'source:model-answer',
+        entry.isRoleplay ? 'source:roleplay' : 'source:topic',
+        `set:${slug(entry.heading || topic)}`,
+      ],
+    });
+  });
+
+  return answers;
+}
+
+function getTitleFromHeading(heading) {
+  return cleanLine(heading).replace(/^(공통형 주제|선택형 주제|ROLE PLAY)\s*/i, '') || 'Study Item';
+}
+
+function categoryForStudyPage(pageText) {
+  if (/강세/.test(pageText)) return 'stress';
+  if (/영어 음운|영어 발음|발음|슈와|설탄음|경음화|L vs R|TH 발음|F\/V 발음/.test(pageText)) {
+    return 'pronunciation';
+  }
+  if (/형용사|부사|구동사|GET 동사|접속사|연결어|복합관계사|동명사|합성어/.test(pageText)) {
+    return 'vocabulary';
+  }
+  return 'textType';
+}
+
+function parseStudyCards(text) {
+  const pages = text.split('\f');
+  const cards = [];
+
+  pages.forEach((page, pageIndex) => {
+    const lines = page
+      .split(/\r?\n/)
+      .map(cleanLine)
+      .filter(Boolean);
+    const pageText = lines.join('\n');
+
+    if (!studyPagePattern.test(pageText)) return;
+
+    const titleLine =
+      lines.find((line) => studyPagePattern.test(line) && line.length <= 80) ?? lines[0];
+    const content = lines
+      .filter((line) => line !== titleLine)
+      .filter((line) => !/^[-–—]+$/.test(line))
+      .join('\n')
+      .trim();
+
+    if (content.length < 40) return;
+
+    cards.push({
+      id: `study-${String(cards.length + 1).padStart(3, '0')}`,
+      title: titleLine,
+      category: categoryForStudyPage(pageText),
+      content,
+      tags: ['pdf', `page:${pageIndex + 1}`],
+    });
+  });
+
+  return cards;
+}
+
 function emit(questions) {
   const body = JSON.stringify(questions, null, 2);
   const source = `import type { Question } from '../types';\n\nexport const pdfQuestionBank: Question[] = ${body};\n`;
   writeFileSync(outputPath, source);
 }
 
+function emitStudyBank(modelAnswers, studyCards) {
+  const answersBody = JSON.stringify(modelAnswers, null, 2);
+  const cardsBody = JSON.stringify(studyCards, null, 2);
+  const source = `import type { ModelAnswer, StudyCard } from '../types';\n\nexport const modelAnswerBank: ModelAnswer[] = ${answersBody};\n\nexport const studyCardBank: StudyCard[] = ${cardsBody};\n`;
+  writeFileSync(studyOutputPath, source);
+}
+
 const text = extractText();
 const questions = parseQuestions(text);
+const modelAnswers = parseModelAnswers(text);
+const studyCards = parseStudyCards(text);
 emit(questions);
+emitStudyBank(modelAnswers, studyCards);
 
 const byTopic = questions.reduce((acc, question) => {
   acc[question.topic] = (acc[question.topic] ?? 0) + 1;
@@ -255,3 +442,4 @@ const byTopic = questions.reduce((acc, question) => {
 
 console.log(`Generated ${questions.length} questions from db.pdf`);
 console.log(byTopic);
+console.log(`Generated ${modelAnswers.length} model answers and ${studyCards.length} study cards`);
