@@ -1,12 +1,11 @@
 const CACHE_VERSION = 'opic-mock-lab-v1';
 const APP_SHELL = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/offline.html',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/icons/maskable-512.png',
+  './index.html',
+  './manifest.webmanifest',
+  './offline.html',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/maskable-512.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -39,10 +38,10 @@ self.addEventListener('fetch', (event) => {
       fetch(request)
         .then((response) => {
           const copy = response.clone();
-          caches.open(CACHE_VERSION).then((cache) => cache.put('/index.html', copy));
+          caches.open(CACHE_VERSION).then((cache) => cache.put('./index.html', copy));
           return response;
         })
-        .catch(() => caches.match('/index.html').then((response) => response || caches.match('/offline.html'))),
+        .catch(() => caches.match('./index.html').then((response) => response || caches.match('./offline.html'))),
     );
     return;
   }

@@ -246,9 +246,13 @@ select {
 
 .setup-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
   gap: 20px;
   align-items: start;
+}
+
+.setup-grid--menu {
+  align-items: stretch;
 }
 
 .panel,
@@ -284,6 +288,14 @@ select {
   top: 96px;
 }
 
+.setup-lede {
+  max-width: 720px;
+  margin: -10px 0 22px;
+  color: var(--text-muted);
+  font-size: clamp(1rem, 1.7vw, 1.2rem);
+  line-height: 1.55;
+}
+
 .panel-kicker,
 .eyebrow {
   display: inline-flex;
@@ -303,14 +315,37 @@ select {
   margin: 22px 0;
 }
 
+.system-check-list {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0;
+}
+
 .check-card {
   display: grid;
   gap: 8px;
-  min-height: 160px;
+  min-height: 148px;
   padding: 18px;
   border: 1px solid var(--border-plain);
   border-radius: 8px;
   background: var(--surface-strong);
+}
+
+.system-check-list .check-card {
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  min-height: 74px;
+  padding: 14px;
+}
+
+.system-check-list .check-card strong,
+.system-check-list .check-card span {
+  min-width: 0;
+}
+
+.system-check-list .check-card .ghost-button,
+.system-check-list .check-card .mini-pill {
+  justify-self: end;
 }
 
 .check-card.ok {
@@ -395,6 +430,60 @@ select {
 
 .mode-actions .wide {
   margin-top: 0;
+}
+
+.main-menu-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.menu-card {
+  display: grid;
+  min-height: 154px;
+  align-content: start;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-solid);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease;
+}
+
+.menu-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--brand-border);
+  box-shadow: 0 18px 42px var(--shadow);
+}
+
+.menu-card svg {
+  color: var(--brand);
+}
+
+.menu-card span {
+  color: var(--text-strong);
+  font-size: 1.3rem;
+  font-weight: 900;
+}
+
+.menu-card small {
+  color: var(--text-soft);
+  font-size: 0.94rem;
+  line-height: 1.4;
+}
+
+.menu-card--primary {
+  border-color: var(--brand-active-border);
+  background:
+    linear-gradient(145deg, var(--surface-success), transparent),
+    var(--surface-solid);
 }
 
 .stats-list {
@@ -1232,6 +1321,7 @@ select {
   }
 
   .check-grid,
+  .main-menu-grid,
   .level-grid,
   .db-stats,
   .plan-stats,

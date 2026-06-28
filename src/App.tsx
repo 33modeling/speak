@@ -51,6 +51,16 @@ import type {
   TopicKey,
 } from './types';
 
+declare global {
+  interface Window {
+    NativeTTS?: {
+      speak: (text: string, lang: string, rate: number, pitch: number, callbackId: string) => void;
+      stop: () => void;
+    };
+    __opicNativeTtsDone?: (callbackId: string) => void;
+  }
+}
+
 const groupLabels = {
   profile: '프로필',
   selected: '선택형 주제',
@@ -299,6 +309,7 @@ function App() {
   const recordStartedAtRef = useRef<number>(0);
   const isRecordingRef = useRef(false);
   const discardNextRecordingRef = useRef(false);
+  const nativeTtsCallbacksRef = useRef<Map<string, () => void>>(new Map());
 
   const currentQuestion = questions[currentIndex];
   const progress = questions.length ? ((currentIndex + 1) / questions.length) * 100 : 0;
@@ -526,8 +537,23 @@ function App() {
   }, [isRecording, questionTimeLeft]);
 
   useEffect(() => {
+    window.__opicNativeTtsDone = (callbackId: string) => {
+      const callback = nativeTtsCallbacksRef.current.get(callbackId);
+      nativeTtsCallbacksRef.current.delete(callbackId);
+      setIsSpeaking(false);
+      callback?.();
+    };
+
     return () => {
+      delete window.__opicNativeTtsDone;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      window.NativeTTS?.stop?.();
       window.speechSynthesis?.cancel();
+      nativeTtsCallbacksRef.current.clear();
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
@@ -544,6 +570,22 @@ function App() {
 
   const speak = useCallback(
     (text: string, onDone?: () => void) => {
+      const nativeTts = window.NativeTTS;
+      if (nativeTts?.speak) {
+        const callbackId = `tts-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        nativeTtsCallbacksRef.current.set(callbackId, () => onDone?.());
+        setIsSpeaking(true);
+
+        try {
+          nativeTts.stop();
+          nativeTts.speak(text, selectedVoice?.lang ?? 'en-US', 0.92, 1, callbackId);
+          return;
+        } catch {
+          nativeTtsCallbacksRef.current.delete(callbackId);
+          setIsSpeaking(false);
+        }
+      }
+
       window.speechSynthesis?.cancel();
 
       if (!('speechSynthesis' in window) || !window.SpeechSynthesisUtterance) {
@@ -746,7 +788,9 @@ function App() {
     if (isStrictExam && !canMoveNext) return;
 
     stopRecording();
+    window.NativeTTS?.stop?.();
     window.speechSynthesis?.cancel();
+    nativeTtsCallbacksRef.current.clear();
     setIsSpeaking(false);
     setQuestionStartedAt(null);
     setReplayAvailableUntil(null);
@@ -765,7 +809,9 @@ function App() {
 
   const resetExam = useCallback(() => {
     stopRecording(true);
+    window.NativeTTS?.stop?.();
     window.speechSynthesis?.cancel();
+    nativeTtsCallbacksRef.current.clear();
     recordings.forEach((entry) => URL.revokeObjectURL(entry.blobUrl));
     setQuestions([]);
     setRecordings([]);
@@ -934,14 +980,47 @@ function App() {
       </header>
 
       {phase === 'setup' && (
-        <section className="workspace setup-grid">
-          <div className="panel primary-panel">
+        <section className="workspace setup-grid setup-grid--menu">
+          <div className="panel primary-panel main-menu-panel">
+            <div className="panel-kicker">
+              <Headphones size={18} />
+              Main menu
+            </div>
+            <h1>OPIc 연습을 바로 시작하세요</h1>
+            <p className="setup-lede">
+              플랜, 모의고사, 주제 연습, DB 관리를 목적별로 나눴습니다.
+            </p>
+
+            <div className="main-menu-grid" aria-label="주요 메뉴">
+              <button className="menu-card menu-card--primary" onClick={() => setPhase('plan')}>
+                <CalendarDays size={24} />
+                <span>공부 플랜</span>
+                <small>2주, 1개월, 2개월 루틴</small>
+              </button>
+              <button className="menu-card menu-card--primary" onClick={() => setPhase('survey')}>
+                <ListChecks size={24} />
+                <span>모의고사</span>
+                <small>서베이부터 실전 15문항</small>
+              </button>
+              <button className="menu-card" onClick={() => setPhase('practice')}>
+                <BookOpen size={24} />
+                <span>주제 연습</span>
+                <small>토픽별 반복 훈련</small>
+              </button>
+              <button className="menu-card" onClick={() => setPhase('database')}>
+                <FileSearch size={24} />
+                <span>DB 관리</span>
+                <small>문제, 답변, 학습 카드</small>
+              </button>
+            </div>
+          </div>
+
+          <div className="panel compact-panel system-panel">
             <div className="panel-kicker">
               <Settings2 size={18} />
               시스템 점검
             </div>
-            <h1>실전 흐름으로 바로 시작</h1>
-            <div className="check-grid">
+            <div className="system-check-list">
               <div className={`check-card ${micStatus === 'ready' ? 'ok' : ''}`}>
                 <Mic size={24} />
                 <strong>마이크</strong>
@@ -951,10 +1030,10 @@ function App() {
                   테스트
                 </button>
               </div>
-              <div className="check-card ok">
+              <div className={`check-card ${window.NativeTTS ? 'ok' : ''}`}>
                 <Volume2 size={24} />
                 <strong>TTS</strong>
-                <span>{voices.length ? `${voices.length} voices` : '브라우저 기본'}</span>
+                <span>{window.NativeTTS ? 'Android native' : voices.length ? `${voices.length} voices` : '브라우저 기본'}</span>
                 <button
                   className="ghost-button"
                   onClick={() => speak('This is a short speaker test for your OPIc practice session.')}
@@ -986,32 +1065,6 @@ function App() {
                 </option>
               ))}
             </select>
-
-            <div className="mode-actions">
-              <button className="primary-button wide" onClick={() => setPhase('plan')}>
-                <CalendarDays size={19} />
-                공부 플랜
-              </button>
-              <button className="primary-button wide" onClick={() => setPhase('survey')}>
-                <ListChecks size={19} />
-                모의고사
-              </button>
-              <button className="secondary-button wide" onClick={() => setPhase('practice')}>
-                <BookOpen size={19} />
-                주제 연습
-              </button>
-              <button className="secondary-button wide" onClick={() => setPhase('database')}>
-                <FileSearch size={19} />
-                DB 관리
-              </button>
-            </div>
-          </div>
-
-          <div className="panel compact-panel">
-            <div className="panel-kicker">
-              <Timer size={18} />
-              시험 설정
-            </div>
             <dl className="stats-list">
               <div>
                 <dt>문항</dt>
